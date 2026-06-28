@@ -2,10 +2,9 @@ name: GitHub Follow Bot
 
 on:
   schedule:
-    - cron: '30 3 * * *'    # 09:00 IST - Follow
-    - cron: '30 9 * * *'    # 15:00 IST - Follow
-    - cron: '30 15 * * *'   # 21:00 IST - Follow
-    - cron: '30 21 * * 0'   # Sunday 03:00 IST - Unfollow
+    - cron: '30 3 * * *'    # 09:00 IST
+    - cron: '30 9 * * *'    # 15:00 IST
+    - cron: '30 15 * * *'   # 21:00 IST
   workflow_dispatch:
     inputs:
       mode:
@@ -17,7 +16,7 @@ on:
           - follow
           - unfollow
       unfollow_source:
-        description: 'Unfollow source (cache=bot followed, all=everyone)'
+        description: 'Unfollow source'
         required: false
         default: 'cache'
         type: choice
@@ -33,13 +32,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Fix: Date-based cache key
+      # එකම දිනේ runs cache share කරනවා
+      # නව දිනයක cache reset වෙනවා
+      - name: Get current date
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
       - name: Restore Stats Cache
         uses: actions/cache@v4
         with:
           path: |
             bot_stats.json
             following_cache.json
-          key: bot-stats-${{ github.run_id }}
+          # Fix: Date-based key - එකම දිනේ
+          # ඔක්කොම runs same cache use කරනවා
+          key: bot-stats-${{ steps.date.outputs.date }}
           restore-keys: |
             bot-stats-
 
@@ -70,7 +78,8 @@ jobs:
           MIN_DELAY: ${{ vars.MIN_DELAY }}
           MAX_DELAY: ${{ vars.MAX_DELAY }}
           UNFOLLOW_LIMIT: ${{ vars.UNFOLLOW_LIMIT }}
-          UNFOLLOW_SOURCE: ${{ github.event.inputs.unfollow_source || 'cache' }}
+          UNFOLLOW_SOURCE: >-
+            ${{ github.event.inputs.unfollow_source || 'cache' }}
 
       - name: Run Bot
         env:
@@ -85,7 +94,8 @@ jobs:
           UNFOLLOW_LIMIT: ${{ vars.UNFOLLOW_LIMIT }}
           UNFOLLOW_MIN_DELAY: ${{ vars.UNFOLLOW_MIN_DELAY }}
           UNFOLLOW_MAX_DELAY: ${{ vars.UNFOLLOW_MAX_DELAY }}
-          UNFOLLOW_SOURCE: ${{ github.event.inputs.unfollow_source || 'cache' }}
+          UNFOLLOW_SOURCE: >-
+            ${{ github.event.inputs.unfollow_source || 'cache' }}
         run: python main.py
 
       - name: Save Stats Cache
@@ -95,4 +105,4 @@ jobs:
           path: |
             bot_stats.json
             following_cache.json
-          key: bot-stats-${{ github.run_id }}
+          key: bot-stats-${{ steps.date.outputs.date }}
