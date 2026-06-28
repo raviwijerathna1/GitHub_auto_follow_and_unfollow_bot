@@ -21,20 +21,17 @@ def main() -> int:
 
     token        = os.getenv("GITHUB_TOKEN")
     target_user  = os.getenv("TARGET_USERNAME", "torvalds")
-    daily_limit  = int(os.getenv("DAILY_LIMIT",          "300"))
-    follow_limit = int(os.getenv("FOLLOW_LIMIT",          "50"))
-    min_delay    = int(os.getenv("MIN_DELAY",             "30"))
-    max_delay    = int(os.getenv("MAX_DELAY",             "60"))
+    daily_limit  = int(os.getenv("DAILY_LIMIT",           "300"))
+    follow_limit = int(os.getenv("FOLLOW_LIMIT",           "50"))
+    min_delay    = int(os.getenv("MIN_DELAY",              "30"))
+    max_delay    = int(os.getenv("MAX_DELAY",              "60"))
 
-    # Unfollow settings
-    mode                  = os.getenv("BOT_MODE", "follow")
-    daily_unfollow_limit  = int(os.getenv("DAILY_UNFOLLOW_LIMIT", "300"))
-    unfollow_limit        = int(os.getenv("UNFOLLOW_LIMIT",        "50"))
-    unfollow_min_delay    = int(os.getenv("UNFOLLOW_MIN_DELAY",    "30"))
-    unfollow_max_delay    = int(os.getenv("UNFOLLOW_MAX_DELAY",    "60"))
-    # cache = bot follow කළ users විතරක් unfollow
-    # all   = සම්පූර්ණ following list unfollow
-    unfollow_source       = os.getenv("UNFOLLOW_SOURCE", "cache")
+    mode                 = os.getenv("BOT_MODE",              "follow")
+    daily_unfollow_limit = int(os.getenv("DAILY_UNFOLLOW_LIMIT", "300"))
+    unfollow_limit       = int(os.getenv("UNFOLLOW_LIMIT",        "50"))
+    unfollow_min_delay   = int(os.getenv("UNFOLLOW_MIN_DELAY",    "30"))
+    unfollow_max_delay   = int(os.getenv("UNFOLLOW_MAX_DELAY",    "60"))
+    unfollow_source      = os.getenv("UNFOLLOW_SOURCE",       "cache")
 
     if not token:
         logger.error("❌ GITHUB_TOKEN not set!")
@@ -44,11 +41,11 @@ def main() -> int:
         logger.error("❌ Invalid token format.")
         return 1
 
-    logger.info(f"🎯 Mode        : {mode}")
-    logger.info(f"🎯 Target      : {target_user}")
-    logger.info(f"📊 Daily limit : {daily_limit}")
+    logger.info(f"🎯 Mode         : {mode}")
+    logger.info(f"🎯 Target       : {target_user}")
+    logger.info(f"📊 Daily limit  : {daily_limit}")
     logger.info(f"📊 Session limit: {follow_limit}")
-    logger.info(f"⏱️  Delay       : {min_delay}s - {max_delay}s")
+    logger.info(f"⏱️  Delay        : {min_delay}s - {max_delay}s")
 
     config = BotConfig(
         daily_follow_limit=daily_limit,
