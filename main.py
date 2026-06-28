@@ -16,22 +16,42 @@ def validate_token(token: str) -> bool:
     return any(token.startswith(prefix) for prefix in valid_prefixes)
 
 
+def get_env_int(key: str, default: int) -> int:
+    """
+    Bug Fix - Empty string handle කිරීම
+    Variable නැත්නම් හෝ empty නම්
+    default value use කිරීම
+    """
+    value = os.getenv(key, "").strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        logger.warning(
+            f"⚠️  Invalid value for {key}: '{value}'. "
+            f"Using default: {default}"
+        )
+        return default
+
+
 def main() -> int:
     logger.info("🚀 GitHub Follow Bot - Starting up")
 
     token        = os.getenv("GITHUB_TOKEN")
     target_user  = os.getenv("TARGET_USERNAME", "torvalds")
-    daily_limit  = int(os.getenv("DAILY_LIMIT",           "300"))
-    follow_limit = int(os.getenv("FOLLOW_LIMIT",           "50"))
-    min_delay    = int(os.getenv("MIN_DELAY",              "30"))
-    max_delay    = int(os.getenv("MAX_DELAY",              "60"))
+    mode         = os.getenv("BOT_MODE", "follow")
+    unfollow_source = os.getenv("UNFOLLOW_SOURCE", "cache")
 
-    mode                 = os.getenv("BOT_MODE",              "follow")
-    daily_unfollow_limit = int(os.getenv("DAILY_UNFOLLOW_LIMIT", "300"))
-    unfollow_limit       = int(os.getenv("UNFOLLOW_LIMIT",        "50"))
-    unfollow_min_delay   = int(os.getenv("UNFOLLOW_MIN_DELAY",    "30"))
-    unfollow_max_delay   = int(os.getenv("UNFOLLOW_MAX_DELAY",    "60"))
-    unfollow_source      = os.getenv("UNFOLLOW_SOURCE",       "cache")
+    # Fix: get_env_int() - empty string safe
+    daily_limit          = get_env_int("DAILY_LIMIT",          300)
+    follow_limit         = get_env_int("FOLLOW_LIMIT",          50)
+    min_delay            = get_env_int("MIN_DELAY",             30)
+    max_delay            = get_env_int("MAX_DELAY",             60)
+    daily_unfollow_limit = get_env_int("DAILY_UNFOLLOW_LIMIT", 300)
+    unfollow_limit       = get_env_int("UNFOLLOW_LIMIT",        50)
+    unfollow_min_delay   = get_env_int("UNFOLLOW_MIN_DELAY",    30)
+    unfollow_max_delay   = get_env_int("UNFOLLOW_MAX_DELAY",    60)
 
     if not token:
         logger.error("❌ GITHUB_TOKEN not set!")
