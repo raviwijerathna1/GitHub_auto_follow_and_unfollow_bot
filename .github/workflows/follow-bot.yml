@@ -1,0 +1,98 @@
+name: GitHub Follow Bot
+
+on:
+  schedule:
+    - cron: '30 3 * * *'    # 09:00 IST - Follow
+    - cron: '30 9 * * *'    # 15:00 IST - Follow
+    - cron: '30 15 * * *'   # 21:00 IST - Follow
+    - cron: '30 21 * * 0'   # Sunday 03:00 IST - Unfollow
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Bot mode'
+        required: true
+        default: 'follow'
+        type: choice
+        options:
+          - follow
+          - unfollow
+      unfollow_source:
+        description: 'Unfollow source (cache=bot followed, all=everyone)'
+        required: false
+        default: 'cache'
+        type: choice
+        options:
+          - cache
+          - all
+
+jobs:
+  follow-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore Stats Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            bot_stats.json
+            following_cache.json
+          key: bot-stats-${{ github.run_id }}
+          restore-keys: |
+            bot-stats-
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Debug Variables
+        run: |
+          echo "MODE: $BOT_MODE"
+          echo "TARGET: $TARGET_USERNAME"
+          echo "DAILY: $DAILY_LIMIT"
+          echo "FOLLOW: $FOLLOW_LIMIT"
+          echo "MIN: $MIN_DELAY"
+          echo "MAX: $MAX_DELAY"
+          echo "UNFOLLOW_LIMIT: $UNFOLLOW_LIMIT"
+          echo "UNFOLLOW_SOURCE: $UNFOLLOW_SOURCE"
+        env:
+          BOT_MODE: ${{ github.event.inputs.mode || 'follow' }}
+          TARGET_USERNAME: ${{ vars.TARGET_USERNAME }}
+          DAILY_LIMIT: ${{ vars.DAILY_LIMIT }}
+          FOLLOW_LIMIT: ${{ vars.FOLLOW_LIMIT }}
+          MIN_DELAY: ${{ vars.MIN_DELAY }}
+          MAX_DELAY: ${{ vars.MAX_DELAY }}
+          UNFOLLOW_LIMIT: ${{ vars.UNFOLLOW_LIMIT }}
+          UNFOLLOW_SOURCE: ${{ github.event.inputs.unfollow_source || 'cache' }}
+
+      - name: Run Bot
+        env:
+          GITHUB_TOKEN: ${{ secrets.FOLLOW_BOT_TOKEN }}
+          BOT_MODE: ${{ github.event.inputs.mode || 'follow' }}
+          TARGET_USERNAME: ${{ vars.TARGET_USERNAME }}
+          DAILY_LIMIT: ${{ vars.DAILY_LIMIT }}
+          FOLLOW_LIMIT: ${{ vars.FOLLOW_LIMIT }}
+          MIN_DELAY: ${{ vars.MIN_DELAY }}
+          MAX_DELAY: ${{ vars.MAX_DELAY }}
+          DAILY_UNFOLLOW_LIMIT: ${{ vars.DAILY_UNFOLLOW_LIMIT }}
+          UNFOLLOW_LIMIT: ${{ vars.UNFOLLOW_LIMIT }}
+          UNFOLLOW_MIN_DELAY: ${{ vars.UNFOLLOW_MIN_DELAY }}
+          UNFOLLOW_MAX_DELAY: ${{ vars.UNFOLLOW_MAX_DELAY }}
+          UNFOLLOW_SOURCE: ${{ github.event.inputs.unfollow_source || 'cache' }}
+        run: python main.py
+
+      - name: Save Stats Cache
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: |
+            bot_stats.json
+            following_cache.json
+          key: bot-stats-${{ github.run_id }}
