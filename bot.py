@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class BotConfig:
-    """Bot සඳහා configuration settings"""
     daily_follow_limit: int = 300
     follow_limit: int = 50
     min_delay: int = 30
@@ -26,7 +25,6 @@ class BotConfig:
     rate_limit_threshold: int = 50
     max_pages: int = 40
     per_page: int = 100
-    # Unfollow settings
     daily_unfollow_limit: int = 300
     unfollow_limit: int = 50
     unfollow_min_delay: int = 30
@@ -35,7 +33,6 @@ class BotConfig:
 
 @dataclass
 class BotStats:
-    """Bot statistics track කිරීම"""
     followed_today: int = 0
     failed_today: int = 0
     total_requests: int = 0
@@ -47,7 +44,6 @@ class BotStats:
 
 
 class RateLimitError(Exception):
-    """GitHub Rate Limit exceeded"""
     pass
 
 
@@ -73,12 +69,7 @@ class GitHubFollowBot:
         self.stats = self._load_stats()
         self._check_daily_reset()
 
-    # -------------------------------------------------------------------------
-    # Stats Management
-    # -------------------------------------------------------------------------
-
     def _load_stats(self) -> BotStats:
-        """Saved stats load කිරීම"""
         try:
             if os.path.exists(self.STATS_FILE):
                 with open(self.STATS_FILE, "r") as f:
@@ -90,14 +81,11 @@ class GitHubFollowBot:
                         if k in valid_keys
                     }
                     return BotStats(**filtered)
-
         except (json.JSONDecodeError, TypeError) as e:
             logger.warning(f"Stats file error: {e}. Starting fresh.")
-
         return BotStats()
 
     def _save_stats(self) -> None:
-        """Current stats save කිරීම"""
         try:
             with open(self.STATS_FILE, "w") as f:
                 json.dump(self.stats.__dict__, f, indent=2)
@@ -105,9 +93,7 @@ class GitHubFollowBot:
             logger.error(f"Failed to save stats: {e}")
 
     def _check_daily_reset(self) -> None:
-        """නව දිනයක් නම් stats reset කිරීම"""
         today = date.today().isoformat()
-
         if self.stats.last_run_date != today:
             logger.info(
                 f"📅 New day detected. Resetting daily stats. "
@@ -121,12 +107,7 @@ class GitHubFollowBot:
             self.stats.last_run_date = today
             self._save_stats()
 
-    # -------------------------------------------------------------------------
-    # Following Cache Management
-    # -------------------------------------------------------------------------
-
     def _load_following_cache(self) -> list[str]:
-        """Bot follow කළ users cache load කිරීම"""
         try:
             if os.path.exists(self.FOLLOWING_CACHE_FILE):
                 with open(self.FOLLOWING_CACHE_FILE, "r") as f:
@@ -137,7 +118,6 @@ class GitHubFollowBot:
         return []
 
     def _save_following_cache(self, following: list[str]) -> None:
-        """Bot follow කළ users cache save කිරීම"""
         try:
             with open(self.FOLLOWING_CACHE_FILE, "w") as f:
                 json.dump(
@@ -153,33 +133,24 @@ class GitHubFollowBot:
             logger.error(f"Failed to save following cache: {e}")
 
     def _add_to_cache(self, username: str) -> None:
-        """Follow කළ user cache එකට add කිරීම"""
         following = self._load_following_cache()
         if username not in following:
             following.append(username)
             self._save_following_cache(following)
 
     def _remove_from_cache(self, username: str) -> None:
-        """Unfollow කළ user cache එකෙන් remove කිරීම"""
         following = self._load_following_cache()
         if username in following:
             following.remove(username)
             self._save_following_cache(following)
 
-    # -------------------------------------------------------------------------
-    # Rate Limit Handling
-    # -------------------------------------------------------------------------
-
     def _handle_rate_limit(self, response: requests.Response) -> None:
-        """Rate limit handle කිරීම"""
         remaining = int(
             response.headers.get("X-RateLimit-Remaining", 100)
         )
         reset_timestamp = int(
             response.headers.get("X-RateLimit-Reset", 0)
         )
-
-        logger.debug(f"Rate limit remaining: {remaining}")
 
         if remaining <= 1:
             raise RateLimitError(
@@ -190,20 +161,15 @@ class GitHubFollowBot:
         if remaining < self.config.rate_limit_threshold:
             wait_seconds = max(0, reset_timestamp - time.time())
             logger.warning(
-                f"⚠️  Rate limit low: {remaining} requests remaining. "
-                f"Waiting {wait_seconds:.0f}s until reset."
+                f"⚠️  Rate limit low: {remaining} remaining. "
+                f"Waiting {wait_seconds:.0f}s"
             )
             time.sleep(wait_seconds + 5)
 
     def _random_delay(self, min_d: int, max_d: int) -> None:
-        """Random delay"""
         delay = random.randint(min_d, max_d)
         logger.info(f"⏳ Waiting {delay} seconds...")
         time.sleep(delay)
-
-    # -------------------------------------------------------------------------
-    # API Requests
-    # -------------------------------------------------------------------------
 
     def _make_request(
         self,
@@ -211,7 +177,6 @@ class GitHubFollowBot:
         url: str,
         **kwargs
     ) -> requests.Response:
-        """Central request handler"""
         try:
             response = requests.request(
                 method,
@@ -227,19 +192,13 @@ class GitHubFollowBot:
                 self._handle_rate_limit(response)
 
             if response.status_code == 401:
-                raise PermissionError(
-                    "❌ Invalid token. Check your GITHUB_TOKEN."
-                )
+                raise PermissionError("❌ Invalid token.")
             elif response.status_code == 403:
-                raise RateLimitError(
-                    "❌ Forbidden. Rate limit or permissions issue."
-                )
+                raise RateLimitError("❌ Forbidden.")
             elif response.status_code == 404:
                 raise ValueError(f"❌ Not found: {url}")
             elif response.status_code == 422:
-                raise ValueError(
-                    "❌ Unprocessable Entity."
-                )
+                raise ValueError("❌ Unprocessable Entity.")
 
             if response.status_code not in (200, 204):
                 response.raise_for_status()
@@ -253,16 +212,11 @@ class GitHubFollowBot:
         except requests.exceptions.RequestException as e:
             raise RuntimeError(f"❌ Request failed: {e}")
 
-    # -------------------------------------------------------------------------
-    # Core Functions
-    # -------------------------------------------------------------------------
-
     def get_followers_with_pagination(
         self,
         username: str,
         needed: int
     ) -> list[str]:
-        """Pagination handle කරමින් followers ගැනීම"""
         all_followers = []
         page = 1
 
@@ -284,16 +238,16 @@ class GitHubFollowBot:
                 if not followers_page:
                     logger.info(
                         f"✅ All pages fetched. "
-                        f"Total: {len(all_followers)} followers"
+                        f"Total: {len(all_followers)}"
                     )
                     break
 
-                usernames = [user["login"] for user in followers_page]
+                usernames = [u["login"] for u in followers_page]
                 all_followers.extend(usernames)
 
                 logger.info(
                     f"  📄 Page {page}: {len(usernames)} followers "
-                    f"(Total so far: {len(all_followers)})"
+                    f"(Total: {len(all_followers)})"
                 )
 
                 if len(all_followers) >= self.config.daily_follow_limit:
@@ -313,14 +267,10 @@ class GitHubFollowBot:
         return all_followers
 
     def get_my_following(self, limit: int = 300) -> list[str]:
-        """
-        ඔයාගේ account එකෙන් follow කරන
-        users list එක ගැනීම
-        """
         all_following = []
         page = 1
 
-        logger.info(f"📋 Fetching your following list...")
+        logger.info("📋 Fetching your following list...")
 
         while page <= self.config.max_pages:
             url = (
@@ -335,7 +285,7 @@ class GitHubFollowBot:
                 if not following_page:
                     break
 
-                usernames = [user["login"] for user in following_page]
+                usernames = [u["login"] for u in following_page]
                 all_following.extend(usernames)
 
                 logger.info(
@@ -359,7 +309,6 @@ class GitHubFollowBot:
         return all_following
 
     def check_already_following(self, username: str) -> bool:
-        """Already following check කිරීම"""
         url = f"{self.base_url}/user/following/{username}"
 
         try:
@@ -382,13 +331,10 @@ class GitHubFollowBot:
         except PermissionError:
             raise
         except Exception as e:
-            logger.warning(
-                f"Could not check following status for {username}: {e}."
-            )
+            logger.warning(f"Could not check {username}: {e}")
             return False
 
     def follow_user(self, username: str) -> bool:
-        """User follow කිරීම"""
         if self.stats.followed_today >= self.config.daily_follow_limit:
             logger.warning(
                 f"🛑 Daily follow limit reached: "
@@ -405,7 +351,6 @@ class GitHubFollowBot:
             if response.status_code == 204:
                 self.stats.followed_today += 1
                 self._save_stats()
-                # Cache එකට add කිරීම
                 self._add_to_cache(username)
                 return True
 
@@ -423,7 +368,6 @@ class GitHubFollowBot:
             return False
 
     def unfollow_user(self, username: str) -> bool:
-        """User unfollow කිරීම"""
         if self.stats.unfollowed_today >= self.config.daily_unfollow_limit:
             logger.warning(
                 f"🛑 Daily unfollow limit reached: "
@@ -440,7 +384,6 @@ class GitHubFollowBot:
             if response.status_code == 204:
                 self.stats.unfollowed_today += 1
                 self._save_stats()
-                # Cache එකෙන් remove කිරීම
                 self._remove_from_cache(username)
                 return True
 
@@ -457,12 +400,11 @@ class GitHubFollowBot:
             self._save_stats()
             return False
 
-    # -------------------------------------------------------------------------
-    # Main Bot Flows
-    # -------------------------------------------------------------------------
-
-    def run(self, target_username: str, limit: Optional[int] = None) -> dict:
-        """Follow bot main execution"""
+    def run(
+        self,
+        target_username: str,
+        limit: Optional[int] = None
+    ) -> dict:
         remaining_daily = (
             self.config.daily_follow_limit - self.stats.followed_today
         )
@@ -477,12 +419,13 @@ class GitHubFollowBot:
         )
 
         logger.info("=" * 50)
-        logger.info(f"🤖 GitHub Follow Bot Starting")
+        logger.info("🤖 GitHub Follow Bot Starting")
         logger.info(f"🎯 Target: {target_username}")
         logger.info(f"📊 Will follow up to: {effective_limit} users")
         logger.info(
             f"📅 Today's progress: "
-            f"{self.stats.followed_today}/{self.config.daily_follow_limit}"
+            f"{self.stats.followed_today}/"
+            f"{self.config.daily_follow_limit}"
         )
         logger.info(f"🕐 Session start: {self.session_start}")
         logger.info("=" * 50)
@@ -507,7 +450,7 @@ class GitHubFollowBot:
                 break
 
             if session_followed >= effective_limit:
-                logger.info(f"✅ Session limit reached: {effective_limit}")
+                logger.info(f"✅ Session limit: {effective_limit}")
                 break
 
             if self.check_already_following(username):
@@ -537,14 +480,6 @@ class GitHubFollowBot:
         limit: Optional[int] = None,
         from_cache: bool = True
     ) -> dict:
-        """
-        Unfollow bot main execution
-
-        Args:
-            limit: Unfollow කළ යුතු maximum count
-            from_cache: True  = Bot follow කළ users unfollow කිරීම
-                        False = ඔයාගේ සම්පූර්ණ following list unfollow
-        """
         remaining_daily = (
             self.config.daily_unfollow_limit - self.stats.unfollowed_today
         )
@@ -559,10 +494,8 @@ class GitHubFollowBot:
         )
 
         logger.info("=" * 50)
-        logger.info(f"🤖 GitHub Unfollow Bot Starting")
-        logger.info(
-            f"📊 Will unfollow up to: {effective_limit} users"
-        )
+        logger.info("🤖 GitHub Unfollow Bot Starting")
+        logger.info(f"📊 Will unfollow up to: {effective_limit} users")
         logger.info(
             f"📋 Source: "
             f"{'Bot cache' if from_cache else 'Full following list'}"
@@ -574,15 +507,12 @@ class GitHubFollowBot:
         )
         logger.info("=" * 50)
 
-        # Unfollow list ගැනීම
         if from_cache:
-            # Bot follow කළ users විතරක්
             to_unfollow = self._load_following_cache()
             logger.info(
                 f"📋 Found {len(to_unfollow)} users in bot cache"
             )
         else:
-            # සම්පූර්ණ following list
             to_unfollow = self.get_my_following(
                 limit=self.config.daily_unfollow_limit
             )
@@ -608,7 +538,7 @@ class GitHubFollowBot:
 
             if session_unfollowed >= effective_limit:
                 logger.info(
-                    f"✅ Session unfollow limit reached: {effective_limit}"
+                    f"✅ Session unfollow limit: {effective_limit}"
                 )
                 break
 
@@ -620,7 +550,7 @@ class GitHubFollowBot:
                 )
                 session_unfollowed += 1
             else:
-                logger.warning(f"❌ Failed to unfollow: {username}")
+                logger.warning(f"❌ Failed: {username}")
                 session_failed += 1
 
             self._random_delay(
@@ -640,7 +570,6 @@ class GitHubFollowBot:
         unfollowed: int = 0,
         unfollow_failed: int = 0
     ) -> dict:
-        """Session summary"""
         summary = {
             "session_followed": followed,
             "session_skipped": skipped,
