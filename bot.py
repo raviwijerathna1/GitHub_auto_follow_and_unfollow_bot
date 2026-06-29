@@ -69,6 +69,10 @@ class GitHubFollowBot:
         self.stats = self._load_stats()
         self._check_daily_reset()
 
+    # -------------------------------------------------------------------------
+    # Stats Management
+    # -------------------------------------------------------------------------
+
     def _load_stats(self) -> BotStats:
         try:
             if os.path.exists(self.STATS_FILE):
@@ -107,6 +111,10 @@ class GitHubFollowBot:
             self.stats.last_run_date = today
             self._save_stats()
 
+    # -------------------------------------------------------------------------
+    # Following Cache Management
+    # -------------------------------------------------------------------------
+
     def _load_following_cache(self) -> list[str]:
         try:
             if os.path.exists(self.FOLLOWING_CACHE_FILE):
@@ -144,6 +152,10 @@ class GitHubFollowBot:
             following.remove(username)
             self._save_following_cache(following)
 
+    # -------------------------------------------------------------------------
+    # Rate Limit Handling
+    # -------------------------------------------------------------------------
+
     def _handle_rate_limit(self, response: requests.Response) -> None:
         remaining = int(
             response.headers.get("X-RateLimit-Remaining", 100)
@@ -170,6 +182,10 @@ class GitHubFollowBot:
         delay = random.randint(min_d, max_d)
         logger.info(f"⏳ Waiting {delay} seconds...")
         time.sleep(delay)
+
+    # -------------------------------------------------------------------------
+    # API Requests
+    # -------------------------------------------------------------------------
 
     def _make_request(
         self,
@@ -212,17 +228,29 @@ class GitHubFollowBot:
         except requests.exceptions.RequestException as e:
             raise RuntimeError(f"❌ Request failed: {e}")
 
+    # -------------------------------------------------------------------------
+    # Core Functions
+    # -------------------------------------------------------------------------
+
     def get_followers_with_pagination(
         self,
         username: str,
         needed: int
     ) -> list[str]:
+        """
+        Fix: needed × 3 buffer fetch කිරීම
+        Already following users account කිරීමට
+        """
         all_followers = []
         page = 1
 
+        # Fix: needed × 3 buffer
+        # Already following ~80% assume කිරීම
+        fetch_target = min(needed * 3, 3000)
+
         logger.info(
             f"📋 Fetching followers for: {username} "
-            f"(need ~{needed})"
+            f"(need ~{needed}, fetching up to {fetch_target})"
         )
 
         while page <= self.config.max_pages:
@@ -247,11 +275,14 @@ class GitHubFollowBot:
 
                 logger.info(
                     f"  📄 Page {page}: {len(usernames)} followers "
-                    f"(Total: {len(all_followers)})"
+                    f"(Total: {len(all_followers)}/{fetch_target})"
                 )
 
-                if len(all_followers) >= self.config.daily_follow_limit:
-                    logger.info("✅ Fetched daily limit. Stopping.")
+                # Fix: fetch_target දක්වා fetch කිරීම
+                if len(all_followers) >= fetch_target:
+                    logger.info(
+                        f"✅ Fetched {fetch_target} users. Stopping."
+                    )
                     break
 
                 page += 1
@@ -400,6 +431,10 @@ class GitHubFollowBot:
             self._save_stats()
             return False
 
+    # -------------------------------------------------------------------------
+    # Main Bot Flows
+    # -------------------------------------------------------------------------
+
     def run(
         self,
         target_username: str,
@@ -439,7 +474,9 @@ class GitHubFollowBot:
             logger.error(f"No followers found for {target_username}")
             return self._get_session_summary()
 
-        logger.info(f"\n🚀 Starting to follow {effective_limit} users...\n")
+        logger.info(
+            f"\n🚀 Starting to follow {effective_limit} users...\n"
+        )
 
         session_followed = 0
         session_skipped = 0
