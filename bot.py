@@ -29,6 +29,7 @@ class BotConfig:
     unfollow_limit: int = 50
     unfollow_min_delay: int = 30
     unfollow_max_delay: int = 60
+    start_page: int = 1        # නව: Pagination start page
 
 
 @dataclass
@@ -235,25 +236,26 @@ class GitHubFollowBot:
     def get_followers_with_pagination(
         self,
         username: str,
-        needed: int
+        needed: int,
+        start_page: int = 1
     ) -> list[str]:
         """
-        Fix: needed × 3 buffer fetch කිරීම
-        Already following users account කිරීමට
+        Fix: start_page ඉදල fetch කිරීම
+        දැනටමත් follow කළ pages skip කිරීම
         """
         all_followers = []
-        page = 1
-
-        # Fix: needed × 3 buffer
-        # Already following ~80% assume කිරීම
-        fetch_target = min(needed * 3, 3000)
+        page = start_page
+        fetch_target = needed * 3
 
         logger.info(
             f"📋 Fetching followers for: {username} "
-            f"(need ~{needed}, fetching up to {fetch_target})"
+            f"(need ~{needed}, start page: {start_page})"
         )
 
-        while page <= self.config.max_pages:
+        # Max page calculate කිරීම
+        max_page = start_page + self.config.max_pages
+
+        while page <= max_page:
             url = (
                 f"{self.base_url}/users/{username}/followers"
                 f"?per_page={self.config.per_page}&page={page}"
@@ -263,10 +265,11 @@ class GitHubFollowBot:
                 response = self._make_request("GET", url)
                 followers_page = response.json()
 
+                # Empty page = අවසාන page
                 if not followers_page:
                     logger.info(
-                        f"✅ All pages fetched. "
-                        f"Total: {len(all_followers)}"
+                        f"✅ No more followers. "
+                        f"Total fetched: {len(all_followers)}"
                     )
                     break
 
@@ -275,13 +278,13 @@ class GitHubFollowBot:
 
                 logger.info(
                     f"  📄 Page {page}: {len(usernames)} followers "
-                    f"(Total: {len(all_followers)}/{fetch_target})"
+                    f"(Total: {len(all_followers)})"
                 )
 
-                # Fix: fetch_target දක්වා fetch කිරීම
+                # Enough users fetch කළාද?
                 if len(all_followers) >= fetch_target:
                     logger.info(
-                        f"✅ Fetched {fetch_target} users. Stopping."
+                        f"✅ Fetched enough users: {len(all_followers)}"
                     )
                     break
 
@@ -438,7 +441,8 @@ class GitHubFollowBot:
     def run(
         self,
         target_username: str,
-        limit: Optional[int] = None
+        limit: Optional[int] = None,
+        start_page: int = 1
     ) -> dict:
         remaining_daily = (
             self.config.daily_follow_limit - self.stats.followed_today
@@ -457,6 +461,7 @@ class GitHubFollowBot:
         logger.info("🤖 GitHub Follow Bot Starting")
         logger.info(f"🎯 Target: {target_username}")
         logger.info(f"📊 Will follow up to: {effective_limit} users")
+        logger.info(f"📄 Start page: {start_page}")
         logger.info(
             f"📅 Today's progress: "
             f"{self.stats.followed_today}/"
@@ -467,7 +472,8 @@ class GitHubFollowBot:
 
         followers = self.get_followers_with_pagination(
             target_username,
-            needed=effective_limit
+            needed=effective_limit,
+            start_page=start_page
         )
 
         if not followers:
