@@ -50,7 +50,7 @@ class BotConfig:
             )
 
         if self.start_page < 1:
-            errors.append(f"start_page must be >= 1")
+            errors.append("start_page must be >= 1")
 
         if self.follow_limit > self.daily_follow_limit:
             errors.append(
@@ -74,12 +74,12 @@ class BotConfig:
 
 @dataclass
 class BotStats:
-    followed_today:       int = 0
-    failed_today:         int = 0
-    total_requests:       int = 0
-    unfollowed_today:     int = 0
+    followed_today:        int = 0
+    failed_today:          int = 0
+    total_requests:        int = 0
+    unfollowed_today:      int = 0
     unfollow_failed_today: int = 0
-    last_run_date:        str = field(
+    last_run_date:         str = field(
         default_factory=lambda: date.today().isoformat()
     )
 
@@ -107,6 +107,11 @@ class GitHubFollowBot:
         }
         self.session_start = datetime.now().isoformat()
         self.stats         = self._load_stats()
+
+        # In-memory following set - session තුළ fast lookup සඳහා
+        # GitHub API වලින් sync කර initialize කරයි
+        self._following_set: Optional[set[str]] = None
+
         self._check_daily_reset()
 
     @property
@@ -156,7 +161,90 @@ class GitHubFollowBot:
             self._save_stats()
 
     # -------------------------------------------------------------------------
-    # Following Cache Management
+    # Following Set - GitHub API සමඟ Sync කළ In-Memory Set
+    # -------------------------------------------------------------------------
+
+    def _build_following_set(self) -> set[str]:
+        """
+        GitHub API වලින් actual following list fetch කර
+        in-memory set build කරයි.
+
+        Cache file incomplete විය හැකි නිසා API ෙදෙකකම ෙබලයි.
+        Session start හිදී එක් වරක් පමණක් call වේ.
+        """
+        logger.info(
+            "🔄 Syncing following list from GitHub API "
+            "(this runs once per session)..."
+        )
+
+        api_following = set()
+        page          = 1
+
+        while True:
+            url = (
+                f"{self.base_url}/user/following"
+                f"?per_page={self.config.per_page}&page={page}"
+            )
+            try:
+                response = self._make_request("GET", url)
+                page_data = response.json()
+
+                if not page_data:
+                    break
+
+                batch = {u["login"] for u in page_data}
+                api_following.update(batch)
+
+                logger.info(
+                    f"  📄 Sync page {page}: "
+                    f"{len(batch)} users "
+                    f"(Total: {len(api_following)})"
+                )
+
+                # Full page නොතිබ්බොත් ඉවරයි
+                if len(page_data) < self.config.per_page:
+                    break
+
+                page += 1
+                time.sleep(random.uniform(0.5, 1.5))
+
+            except (RateLimitError, PermissionError) as e:
+                logger.error(f"❌ Sync failed at page {page}: {e}")
+                break
+            except Exception as e:
+                logger.warning(f"⚠️  Sync page {page} error: {e}")
+                break
+
+        logger.info(
+            f"✅ Sync complete: {len(api_following)} users following"
+        )
+
+        # Cache file update - API data සමඟ sync
+        self._save_following_cache(sorted(api_following))
+
+        return api_following
+
+    def _get_following_set(self) -> set[str]:
+        """
+        In-memory following set return කරයි.
+        First call හිදී GitHub API ෙදෙකකම sync කරයි.
+        """
+        if self._following_set is None:
+            self._following_set = self._build_following_set()
+        return self._following_set
+
+    def _mark_as_following(self, username: str) -> None:
+        """Follow success වූ පසු in-memory set සහ cache update කරයි."""
+        self._get_following_set().add(username)
+        self._add_to_cache(username)
+
+    def _mark_as_unfollowed(self, username: str) -> None:
+        """Unfollow success වූ පසු in-memory set සහ cache update කරයි."""
+        self._get_following_set().discard(username)
+        self._remove_from_cache(username)
+
+    # -------------------------------------------------------------------------
+    # Following Cache Management (Disk)
     # -------------------------------------------------------------------------
 
     def _load_following_cache(self) -> list[str]:
@@ -201,10 +289,6 @@ class GitHubFollowBot:
     # -------------------------------------------------------------------------
 
     def _load_pagination_state(self) -> dict:
-        """
-        Last successful page number save කරගෙන ඉන්නවා.
-        Format: { "username": { "last_page": 5, "updated_at": "..." } }
-        """
         try:
             if os.path.exists(self.PAGINATION_FILE):
                 with open(self.PAGINATION_FILE, "r") as f:
@@ -213,8 +297,11 @@ class GitHubFollowBot:
             logger.warning(f"Pagination state read error: {e}")
         return {}
 
-    def _save_pagination_state(self, username: str, next_page: int) -> None:
-        """Target username සඳහා next page save කරයි."""
+    def _save_pagination_state(
+        self,
+        username:  str,
+        next_page: int
+    ) -> None:
         state = self._load_pagination_state()
         state[username] = {
             "last_page":  next_page,
@@ -227,10 +314,6 @@ class GitHubFollowBot:
             logger.error(f"Failed to save pagination state: {e}")
 
     def _get_resume_page(self, username: str) -> int:
-        """
-        Username සඳහා resume page return කරයි.
-        State නැත්නම් config.start_page return කරයි.
-        """
         state = self._load_pagination_state()
         if username in state:
             last = state[username]["last_page"]
@@ -242,7 +325,6 @@ class GitHubFollowBot:
         return self.config.start_page
 
     def reset_pagination(self, username: str) -> None:
-        """Username සඳහා pagination state reset කරයි."""
         state = self._load_pagination_state()
         if username in state:
             del state[username]
@@ -354,14 +436,13 @@ class GitHubFollowBot:
         start_page: Optional[int] = None
     ) -> list[str]:
         """
-        Fresh (follow නොකළ) users needed count එකට හම්බ වෙනතුරු fetch කරයි.
+        Synced following set භාවිතා කර fresh users fetch කරයි.
 
-        start_page:
-          - None  → pagination_state.json ඉදලා auto-resume
-          - int   → manual override (pagination state ignore කරයි)
-
-        Page state persist කරයි - crash වුනොත් resume කළ හැකිය.
-        Followers ඉවර වුනොත් pagination reset කර page 1 ඉදලා restart.
+        Key fix:
+        - _get_following_set() = GitHub API synced set (accurate)
+        - Cache miss නිසා false fresh ලැබෙන ප්‍රශ්නය නැත
+        - needed count හම්බ වෙනතුරු pages scan කරයි
+        - Page state persist කරයි
         """
         # Auto-resume හෝ manual override
         if start_page is None:
@@ -370,8 +451,8 @@ class GitHubFollowBot:
             current_page = start_page
             logger.info(f"📄 Manual start page override: {current_page}")
 
-        # Already following set - O(1) lookup සඳහා
-        already_following_set = set(self._load_following_cache())
+        # GitHub API synced following set - accurate lookup
+        following_set = self._get_following_set()
 
         fresh_users = []
         max_page    = current_page + self.config.max_pages
@@ -381,7 +462,7 @@ class GitHubFollowBot:
             f"Target: {username} | "
             f"Need: {needed} | "
             f"From page: {current_page} | "
-            f"Cache: {len(already_following_set)} users"
+            f"Following: {len(following_set)} (API synced)"
         )
 
         while current_page <= max_page:
@@ -394,7 +475,6 @@ class GitHubFollowBot:
                 response  = self._make_request("GET", url)
                 page_data = response.json()
 
-                # Empty page = followers ඉවරයි
                 if not page_data:
                     logger.info(
                         f"📭 No more followers at page {current_page}. "
@@ -406,7 +486,7 @@ class GitHubFollowBot:
                 page_users    = [u["login"] for u in page_data]
                 fresh_on_page = [
                     u for u in page_users
-                    if u not in already_following_set
+                    if u not in following_set
                 ]
                 skipped       = len(page_users) - len(fresh_on_page)
 
@@ -416,14 +496,13 @@ class GitHubFollowBot:
                     f"  📄 Page {current_page}: "
                     f"{len(page_users)} total | "
                     f"✅ {len(fresh_on_page)} fresh | "
-                    f"⏭️  {skipped} skip | "
+                    f"⏭️  {skipped} already following | "
                     f"📦 {len(fresh_users)} accumulated"
                 )
 
-                # Next page state save - crash recovery සඳහා
+                # Next page state save
                 self._save_pagination_state(username, current_page + 1)
 
-                # Enough fresh users ලැබුණාද?
                 if len(fresh_users) >= needed:
                     logger.info(
                         f"✅ Found enough fresh users: "
@@ -451,6 +530,19 @@ class GitHubFollowBot:
         return fresh_users
 
     def get_my_following(self, limit: int = 300) -> list[str]:
+        """
+        Unfollow mode සඳහා following list fetch කරයි.
+        _build_following_set() already sync කළා නම් reuse කරයි.
+        """
+        # Already synced නම් reuse
+        if self._following_set is not None:
+            result = sorted(self._following_set)
+            logger.info(
+                f"📋 Using synced following list: {len(result)} users"
+            )
+            return result[:limit]
+
+        # Fresh fetch
         all_following = []
         page          = 1
 
@@ -492,29 +584,6 @@ class GitHubFollowBot:
 
         return all_following
 
-    def check_already_following(self, username: str) -> bool:
-        """Cache hit නම් API call skip කරයි."""
-        # Cache check first - API call avoid කිරීමට
-        cache = set(self._load_following_cache())
-        if username in cache:
-            return True
-
-        # Cache miss - API verify
-        url = f"{self.base_url}/user/following/{username}"
-
-        try:
-            response = self._make_request("GET", url)
-            return response.status_code == 204
-
-        except ValueError:
-            # 404 = not following
-            return False
-        except (PermissionError, RateLimitError):
-            raise
-        except Exception as e:
-            logger.warning(f"Could not check {username}: {e}")
-            return False
-
     def follow_user(self, username: str) -> bool:
         if self.stats.followed_today >= self.config.daily_follow_limit:
             logger.warning(
@@ -532,7 +601,7 @@ class GitHubFollowBot:
             if response.status_code == 204:
                 self.stats.followed_today += 1
                 self._save_stats()
-                self._add_to_cache(username)
+                self._mark_as_following(username)
                 return True
 
             return False
@@ -565,7 +634,7 @@ class GitHubFollowBot:
             if response.status_code == 204:
                 self.stats.unfollowed_today += 1
                 self._save_stats()
-                self._remove_from_cache(username)
+                self._mark_as_unfollowed(username)
                 return True
 
             return False
@@ -591,11 +660,6 @@ class GitHubFollowBot:
         limit:           Optional[int] = None,
         start_page:      Optional[int] = None
     ) -> dict:
-        """
-        start_page:
-          - None → auto-resume from pagination_state.json
-          - int  → manual page override
-        """
         remaining_daily = (
             self.config.daily_follow_limit - self.stats.followed_today
         )
@@ -624,7 +688,7 @@ class GitHubFollowBot:
         logger.info(f"   🕐 Session start: {self.session_start}")
         logger.info("=" * 55)
 
-        # Fresh users மட்டும் fetch - already following skip
+        # Fresh users fetch - API synced set භාවිතා කරයි
         fresh_followers = self.get_followers_with_pagination(
             username   = target_username,
             needed     = effective_limit,
@@ -645,15 +709,12 @@ class GitHubFollowBot:
         )
 
         session_followed = 0
-        session_skipped  = 0
 
         for username in fresh_followers:
-            # Daily limit check
             if self.stats.followed_today >= self.config.daily_follow_limit:
                 logger.warning("🛑 Daily limit reached mid-session.")
                 break
 
-            # Session limit check
             if session_followed >= effective_limit:
                 logger.info(
                     f"✅ Session goal reached: "
@@ -661,12 +722,7 @@ class GitHubFollowBot:
                 )
                 break
 
-            # Double-check (cache miss edge case)
-            if self.check_already_following(username):
-                logger.info(f"⏭️  Double-check skip: {username}")
-                session_skipped += 1
-                continue
-
+            # No double-check needed - following_set is API synced
             if self.follow_user(username):
                 logger.info(
                     f"✅ [{session_followed + 1}/{effective_limit}] "
@@ -676,7 +732,6 @@ class GitHubFollowBot:
                 )
                 session_followed += 1
 
-                # Last user නම් delay skip
                 if session_followed < effective_limit:
                     self._random_delay(
                         self.config.min_delay,
@@ -685,7 +740,7 @@ class GitHubFollowBot:
             else:
                 logger.warning(f"❌ Failed: {username}")
 
-        return self._get_session_summary(session_followed, session_skipped)
+        return self._get_session_summary(session_followed)
 
     def run_unfollow(
         self,
@@ -774,7 +829,7 @@ class GitHubFollowBot:
                 session_failed += 1
 
         return self._get_session_summary(
-            unfollowed     = session_unfollowed,
+            unfollowed      = session_unfollowed,
             unfollow_failed = session_failed
         )
 
