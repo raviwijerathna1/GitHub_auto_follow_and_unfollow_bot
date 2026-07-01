@@ -11,10 +11,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 VALID_MODES         = frozenset({"follow", "unfollow"})
 VALID_SOURCES       = frozenset({"cache", "api"})
 TOKEN_MIN_LENGTH    = 20
@@ -22,34 +18,32 @@ DAILY_LIMIT_WARNING = 400
 MIN_DELAY_WARNING   = 10
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+class ExitCode:
+    SUCCESS          = 0
+    AUTH_ERROR       = 1
+    NETWORK_ERROR    = 2
+    UNEXPECTED_ERROR = 3
+    CONFIG_ERROR     = 4
+    NO_ACTION        = 5
+
 
 def mask_token(token: str) -> str:
-    """Safe logging සඳහා token mask කරයි."""
     if len(token) <= 8:
         return "***"
     return f"{token[:4]}...{token[-4:]}"
 
 
 def validate_token(token: str) -> bool:
-    """GitHub token format සහ minimum length validate කරයි."""
     if not token or len(token) < TOKEN_MIN_LENGTH:
         return False
     valid_prefixes = (
-        "ghp_",
-        "gho_",
-        "ghu_",
-        "ghs_",
-        "ghr_",
-        "github_pat_",
+        "ghp_", "gho_", "ghu_",
+        "ghs_", "ghr_", "github_pat_",
     )
     return any(token.startswith(p) for p in valid_prefixes)
 
 
 def get_env_int(key: str, default: int) -> int:
-    """Empty string safe integer conversion."""
     raw = os.getenv(key, "").strip()
     if not raw:
         return default
@@ -64,11 +58,6 @@ def get_env_int(key: str, default: int) -> int:
 
 
 def get_env_start_page() -> Optional[int]:
-    """
-    START_PAGE env var read කරයි.
-    Set නැත්නම් None return කරයි → auto-resume mode.
-    Set කළොත් manual override.
-    """
     raw = os.getenv("START_PAGE", "").strip()
     if not raw:
         return None
@@ -88,10 +77,6 @@ def get_env_start_page() -> Optional[int]:
         return None
 
 
-# ---------------------------------------------------------------------------
-# Validation
-# ---------------------------------------------------------------------------
-
 def validate_config(
     mode:               str,
     unfollow_source:    str,
@@ -102,7 +87,6 @@ def validate_config(
     follow_limit:       int,
     daily_limit:        int,
 ) -> list[str]:
-    """Configuration validate කර error list return කරයි."""
     errors = []
 
     if mode not in VALID_MODES:
@@ -134,7 +118,6 @@ def validate_config(
             f"DAILY_LIMIT ({daily_limit})"
         )
 
-    # Non-fatal warnings
     if daily_limit > DAILY_LIMIT_WARNING:
         logger.warning(
             f"⚠️  DAILY_LIMIT={daily_limit} > {DAILY_LIMIT_WARNING} "
@@ -150,32 +133,15 @@ def validate_config(
     return errors
 
 
-# ---------------------------------------------------------------------------
-# Exit Codes
-# ---------------------------------------------------------------------------
-
-class ExitCode:
-    SUCCESS          = 0
-    AUTH_ERROR       = 1
-    NETWORK_ERROR    = 2
-    UNEXPECTED_ERROR = 3
-    CONFIG_ERROR     = 4
-    NO_ACTION        = 5
-
-
 def evaluate_results(mode: str, results: dict) -> int:
-    """Bot results ඉදලා exit code determine කරයි."""
     if mode == "follow":
-        actioned = results.get("session_followed",  0)
+        actioned  = results.get("session_followed",  0)
+        remaining = results.get("remaining_follows",  0)
     else:
-        actioned = results.get("session_unfollowed", 0)
+        actioned  = results.get("session_unfollowed", 0)
+        remaining = results.get("remaining_unfollows", 0)
 
     if actioned == 0:
-        remaining = (
-            results.get("remaining_follows",  0)
-            if mode == "follow"
-            else results.get("remaining_unfollows", 0)
-        )
         if remaining == 0:
             logger.warning("⚠️  Daily limit was already reached")
         else:
@@ -185,19 +151,15 @@ def evaluate_results(mode: str, results: dict) -> int:
     return ExitCode.SUCCESS
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def _log_startup(
-    token:          str,
-    mode:           str,
-    target_user:    str,
-    daily_limit:    int,
-    follow_limit:   int,
-    start_page:     Optional[int],
-    min_delay:      int,
-    max_delay:      int,
+    token:        str,
+    mode:         str,
+    target_user:  str,
+    daily_limit:  int,
+    follow_limit: int,
+    start_page:   Optional[int],
+    min_delay:    int,
+    max_delay:    int,
 ) -> None:
     logger.info("=" * 55)
     logger.info("⚙️  Configuration")
@@ -218,9 +180,6 @@ def _log_startup(
 def main() -> int:
     logger.info("🚀 GitHub Follow Bot - Starting up")
 
-    # -------------------------------------------------------------------------
-    # Environment variables load
-    # -------------------------------------------------------------------------
     token           = os.getenv("GITHUB_TOKEN", "").strip()
     target_user     = os.getenv("TARGET_USERNAME", "torvalds").strip()
     mode            = os.getenv("BOT_MODE", "follow").strip().lower()
@@ -234,27 +193,18 @@ def main() -> int:
     unfollow_limit       = get_env_int("UNFOLLOW_LIMIT",        50)
     unfollow_min_delay   = get_env_int("UNFOLLOW_MIN_DELAY",    30)
     unfollow_max_delay   = get_env_int("UNFOLLOW_MAX_DELAY",    60)
+    start_page           = get_env_start_page()
 
-    # None = auto-resume | int = manual override
-    start_page: Optional[int] = get_env_start_page()
-
-    # -------------------------------------------------------------------------
-    # Token validation
-    # -------------------------------------------------------------------------
     if not token:
         logger.error("❌ GITHUB_TOKEN is not set!")
         return ExitCode.AUTH_ERROR
 
     if not validate_token(token):
         logger.error(
-            f"❌ Invalid token format: {mask_token(token)}. "
-            f"Expected: ghp_*, gho_*, ghu_*, ghs_*, ghr_*, github_pat_*"
+            f"❌ Invalid token format: {mask_token(token)}"
         )
         return ExitCode.AUTH_ERROR
 
-    # -------------------------------------------------------------------------
-    # Config validation
-    # -------------------------------------------------------------------------
     errors = validate_config(
         mode               = mode,
         unfollow_source    = unfollow_source,
@@ -271,9 +221,6 @@ def main() -> int:
             logger.error(f"❌ Config error: {error}")
         return ExitCode.CONFIG_ERROR
 
-    # -------------------------------------------------------------------------
-    # Startup log
-    # -------------------------------------------------------------------------
     _log_startup(
         token        = token,
         mode         = mode,
@@ -285,9 +232,6 @@ def main() -> int:
         max_delay    = max_delay,
     )
 
-    # -------------------------------------------------------------------------
-    # Bot run
-    # -------------------------------------------------------------------------
     config = BotConfig(
         daily_follow_limit   = daily_limit,
         follow_limit         = follow_limit,
